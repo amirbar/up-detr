@@ -45,8 +45,9 @@ class SelfDet(Dataset):
         self.num_patches = num_patches
         for (troot, _, files) in os.walk(root, followlinks=True):
             for f in files:
-                path = os.path.join(troot, f)
-                self.files.append(path)
+                if f.split('.')[-1].lower() in ['jpg', 'jpeg', 'png']:
+                    path = os.path.join(troot, f)
+                    self.files.append(path)
         print(f'num of files:{len(self.files)}')
 
     def __len__(self):
