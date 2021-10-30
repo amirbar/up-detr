@@ -69,11 +69,15 @@ class BackboneBase(nn.Module):
             if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
                 parameter.requires_grad_(False)
         if return_interm_layers:
-            return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
+            self.strides = [8, 16, 32]
+            self.num_channels = [512, 1024, 2048]
+            return_layers = {"layer2": "0", "layer3": "1", "layer4": "2"}
+            # return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
         else:
             return_layers = {'layer4': "0"}
+            self.strides = [32]
+            self.num_channels = [2048]
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
-        self.num_channels = num_channels
 
     def forward(self, tensor_list):
         """supports both NestedTensor and torch.Tensor
@@ -113,19 +117,23 @@ class Backbone(BackboneBase):
 class Joiner(nn.Sequential):
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
+        self.strides = backbone.strides
+        self.num_channels = backbone.num_channels
 
-    def forward(self, tensor_list):
-        """supports both NestedTensor and torch.Tensor
-        """
+    def forward(self, tensor_list: NestedTensor):
         if isinstance(tensor_list, NestedTensor):
+
             xs = self[0](tensor_list)
             out: List[NestedTensor] = []
             pos = []
-            for name, x in xs.items():
+            for name, x in sorted(xs.items()):
                 out.append(x)
-                # position encoding
+
+            # position encoding
+            for x in out:
                 pos.append(self[1](x).to(x.tensors.dtype))
             return out, pos
+
         else:
             return list(self[0](tensor_list).values())
 
@@ -133,8 +141,8 @@ class Joiner(nn.Sequential):
 
 def build_backbone(args):
     position_embedding = build_position_encoding(args)
-    train_backbone = args.lr_backbone > 0
-    return_interm_layers = args.masks
+    train_backbone = args.lr_backbone > 0 and not args.fre_cnn
+    return_interm_layers = args.masks or (args.num_feature_levels > 1)
     backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
     model = Joiner(backbone, position_embedding)
     model.num_channels = backbone.num_channels

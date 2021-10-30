@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import os
 import torch
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -20,85 +21,87 @@ import util.misc as utils
 from datasets import build_dataset
 from engine import train_one_epoch
 from models import build_model
+from util.default_args import set_model_defaults, get_args_parser
 
-
-def get_args_parser():
-    parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
-    parser.add_argument('--lr', default=1e-4, type=float)
-    parser.add_argument('--batch_size', default=2, type=int)
-    parser.add_argument('--weight_decay', default=1e-4, type=float)
-    parser.add_argument('--epochs', default=60, type=int)
-    parser.add_argument('--lr_drop', default=40, type=int)
-    parser.add_argument('--clip_max_norm', default=0.1, type=float,
-                        help='gradient clipping max norm')
-
-    # * Backbone
-    parser.add_argument('--backbone', default='resnet50', type=str,
-                        help="Name of the convolutional backbone to use")
-    parser.add_argument('--dilation', action='store_true',
-                        help="If true, we replace stride with dilation in the last convolutional block (DC5)")
-    parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
-                        help="Type of positional embedding to use on top of the image features")
-
-    # * Transformer
-    parser.add_argument('--enc_layers', default=6, type=int,
-                        help="Number of encoding layers in the transformer")
-    parser.add_argument('--dec_layers', default=6, type=int,
-                        help="Number of decoding layers in the transformer")
-    parser.add_argument('--dim_feedforward', default=2048, type=int,
-                        help="Intermediate size of the feedforward layers in the transformer blocks")
-    parser.add_argument('--hidden_dim', default=256, type=int,
-                        help="Size of the embeddings (dimension of the transformer)")
-    parser.add_argument('--dropout', default=0.1, type=float,
-                        help="Dropout applied in the transformer")
-    parser.add_argument('--nheads', default=8, type=int,
-                        help="Number of attention heads inside the transformer's attentions")
-    parser.add_argument('--num_queries', default=100, type=int,
-                        help="Number of query slots")
-    parser.add_argument('--num_patches', default=10, type=int, help='number of query patches')
-    parser.add_argument('--pre_norm', action='store_true')
-
-    # Loss
-    parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
-                        help="Disables auxiliary decoding losses (loss at each layer)")
-    # * Matcher
-    parser.add_argument('--set_cost_class', default=1, type=float,
-                        help="Class coefficient in the matching cost")
-    parser.add_argument('--set_cost_bbox', default=5, type=float,
-                        help="L1 box coefficient in the matching cost")
-    parser.add_argument('--set_cost_giou', default=2, type=float,
-                        help="giou box coefficient in the matching cost")
-    # * Loss coefficients
-    parser.add_argument('--mask_loss_coef', default=1, type=float)
-    parser.add_argument('--dice_loss_coef', default=1, type=float)
-    parser.add_argument('--bbox_loss_coef', default=5, type=float)
-    parser.add_argument('--giou_loss_coef', default=2, type=float)
-    parser.add_argument('--eos_coef', default=0.1, type=float,
-                        help="Relative classification weight of the no-object class")
-
-    parser.add_argument('--output_dir', default='',
-                        help='path where to save, empty for no saving')
-    parser.add_argument('--device', default='cuda',
-                        help='device to use for training / testing')
-    parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
-    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
-                        help='start epoch')
-    parser.add_argument('--eval', action='store_true')
-    parser.add_argument('--num_workers', default=16, type=int)
-
-    # distributed training parameters
-    parser.add_argument('--world_size', default=1, type=int,
-                        help='number of distributed processes')
-    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
-
-    # custom parameters
-    parser.add_argument('--imagenet_path', type=str, default="", help="path to the ImageNet dataset, like ImageNet")
-    parser.add_argument('--feature_recon', action='store_true', help='if set, add feature reconstruction branch')
-    parser.add_argument('--query_shuffle', action='store_true', help='if set, shuffle object queries')
-    parser.add_argument('--fre_cnn', action='store_true',
-                        help="if set, freeze cnn parameters during the pre-training")
-    return parser
+#
+# def get_args_parser():
+#     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
+#     parser.add_argument('--lr', default=1e-4, type=float)
+#     parser.add_argument('--batch_size', default=2, type=int)
+#     parser.add_argument('--weight_decay', default=1e-4, type=float)
+#     parser.add_argument('--epochs', default=60, type=int)
+#     parser.add_argument('--lr_drop', default=40, type=int)
+#     parser.add_argument('--clip_max_norm', default=0.1, type=float,
+#                         help='gradient clipping max norm')
+#
+#     # * Backbone
+#     parser.add_argument('--backbone', default='resnet50', type=str,
+#                         help="Name of the convolutional backbone to use")
+#     parser.add_argument('--dilation', action='store_true',
+#                         help="If true, we replace stride with dilation in the last convolutional block (DC5)")
+#     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
+#                         help="Type of positional embedding to use on top of the image features")
+#
+#     # * Transformer
+#     parser.add_argument('--enc_layers', default=6, type=int,
+#                         help="Number of encoding layers in the transformer")
+#     parser.add_argument('--dec_layers', default=6, type=int,
+#                         help="Number of decoding layers in the transformer")
+#     parser.add_argument('--dim_feedforward', default=2048, type=int,
+#                         help="Intermediate size of the feedforward layers in the transformer blocks")
+#     parser.add_argument('--hidden_dim', default=256, type=int,
+#                         help="Size of the embeddings (dimension of the transformer)")
+#     parser.add_argument('--dropout', default=0.1, type=float,
+#                         help="Dropout applied in the transformer")
+#     parser.add_argument('--nheads', default=8, type=int,
+#                         help="Number of attention heads inside the transformer's attentions")
+#     parser.add_argument('--num_queries', default=100, type=int,
+#                         help="Number of query slots")
+#     parser.add_argument('--num_patches', default=10, type=int, help='number of query patches')
+#     parser.add_argument('--pre_norm', action='store_true')
+#
+#     # Loss
+#     parser.add_argument('--no_aux_loss', dest='aux_loss', action='store_false',
+#                         help="Disables auxiliary decoding losses (loss at each layer)")
+#     # * Matcher
+#     parser.add_argument('--set_cost_class', default=1, type=float,
+#                         help="Class coefficient in the matching cost")
+#     parser.add_argument('--set_cost_bbox', default=5, type=float,
+#                         help="L1 box coefficient in the matching cost")
+#     parser.add_argument('--set_cost_giou', default=2, type=float,
+#                         help="giou box coefficient in the matching cost")
+#     # * Loss coefficients
+#     parser.add_argument('--mask_loss_coef', default=1, type=float)
+#     parser.add_argument('--dice_loss_coef', default=1, type=float)
+#     parser.add_argument('--bbox_loss_coef', default=5, type=float)
+#     parser.add_argument('--giou_loss_coef', default=2, type=float)
+#     parser.add_argument('--eos_coef', default=0.1, type=float,
+#                         help="Relative classification weight of the no-object class")
+#
+#     parser.add_argument('--output_dir', default='',
+#                         help='path where to save, empty for no saving')
+#     parser.add_argument('--device', default='cuda',
+#                         help='device to use for training / testing')
+#     parser.add_argument('--seed', default=42, type=int)
+#     parser.add_argument('--resume', default='', help='resume from checkpoint')
+#     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
+#                         help='start epoch')
+#     parser.add_argument('--eval', action='store_true')
+#     parser.add_argument('--num_workers', default=16, type=int)
+#     parser.add_argument('--model', default='detr', type=str)
+#
+#     # distributed training parameters
+#     parser.add_argument('--world_size', default=1, type=int,
+#                         help='number of distributed processes')
+#     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+#
+#     # custom parameters
+#     parser.add_argument('--imagenet_path', type=str, default="", help="path to the ImageNet dataset, like ImageNet")
+#     parser.add_argument('--feature_recon', action='store_true', help='if set, add feature reconstruction branch')
+#     parser.add_argument('--query_shuffle', action='store_true', help='if set, shuffle object queries')
+#     parser.add_argument('--fre_cnn', action='store_true',
+#                         help="if set, freeze cnn parameters during the pre-training")
+#     return parser
 
 
 def main(args):
@@ -125,17 +128,37 @@ def main(args):
 
     model_without_ddp = model
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print('number of params:', n_parameters)
 
+    def match_name_keywords(n, name_keywords):
+        out = False
+        for b in name_keywords:
+            if b in n:
+                out = True
+                break
+        return out
+
+    for n, p in model_without_ddp.named_parameters():
+        print(n)
+
     param_dicts = [
-        {"params": [p for n, p in model_without_ddp.named_parameters() if "backbone" not in n and p.requires_grad]},
         {
-            "params": [p for n, p in model_without_ddp.named_parameters() if "backbone" in n and p.requires_grad],
+            "params":
+                [p for n, p in model_without_ddp.named_parameters()
+                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr,
+        },
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
             "lr": args.lr_backbone,
         },
+        {
+            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+            "lr": args.lr * args.lr_linear_proj_mult,
+        }
     ]
     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
                                   weight_decay=args.weight_decay)
@@ -176,6 +199,8 @@ def main(args):
         train_stats = train_one_epoch(
             model, criterion, data_loader_train, optimizer, device, epoch,
             args.clip_max_norm)
+
+
         lr_scheduler.step()
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
@@ -207,6 +232,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('UP-DETR ptr-training script', parents=[get_args_parser()])
     args = parser.parse_args()
+    set_model_defaults(args)
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     main(args)
